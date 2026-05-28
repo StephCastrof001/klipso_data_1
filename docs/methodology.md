@@ -45,6 +45,32 @@ Un data analyst sabe cuándo NO usar IA.
 
 ---
 
+## Modelo A.1 — Determinístico Enriquecido (post-benchmark)
+
+**Filosofía:** "Un buen analista itera. El primer análisis es el punto de partida, no el destino."
+
+Después de comparar Modelo A contra el benchmark (Nayankoli/Spotify-Streamed-Songs-
+y Power BI ref), se identificaron 4 gaps concretos. A.1 los cubre sin cambiar la arquitectura.
+
+**Qué agrega sobre A:**
+- KPIs con mediana (más honesto para distribución sesgada)
+- Audio DNA: JOIN enriquecido con features de audio (bpm, energy, danceability, etc.)
+- H5: correlación audio features vs streams
+- Visualización de distribución (histogram + IQR)
+- Outliers explícitos en scatter H1
+
+**Stack:** idéntico al Modelo A. Solo datos y visualizaciones cambian.
+
+**Archivos nuevos:**
+- `agents/05a_enrich.py` — JOIN con dataset Nayankoli por track_name + artist
+- `agents/06_viz_a1.py` — gráficos adicionales (distribución, H5, outliers marcados)
+- `app_a1.py` — Streamlit app A.1 con KPIs actualizados + secciones nuevas
+
+**Lección clave:** La iteración basada en benchmark es metodología CRISP-DM real.
+No es rehacer el trabajo — es demostrar que sabés leer los gaps de tu propio análisis.
+
+---
+
 ## Modelo B — Human-in-the-Loop (HITL)
 
 **Filosofía:** "El análisis de datos requiere juicio humano en el medio, no solo al final."
