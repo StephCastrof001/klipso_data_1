@@ -45,3 +45,4 @@ flujo-analisis-draft.md
 
 # Datos originales — ya están en inputs/, no duplicar
 *.pkl
+.aider*
