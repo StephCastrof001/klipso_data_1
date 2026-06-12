@@ -1,90 +1,124 @@
-"""Pipeline completo — ejecuta los 4 agentes Spotify en secuencia."""
+"""Pipeline completo — ejecuta los agentes Spotify en secuencia con maxima robustez."""
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import importlib.util
 import time
+import logging
+import traceback
 from pathlib import Path
 
-AGENTS_DIR = Path(__file__).parent / "agents"
+# Configurar logging robusto
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler("pipeline_execution.log", encoding="utf-8"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("Orchestrator")
 
+AGENTS_DIR = Path(__file__).parent / "agents"
+INPUTS_DIR = Path(__file__).parent / "inputs"
 
 def _load_agent(filename: str):
-    """Carga un módulo con nombre numérico que Python no puede importar directamente."""
+    """Carga un modulo con nombre numerico."""
     path = AGENTS_DIR / filename
     spec = importlib.util.spec_from_file_location(filename.replace(".", "_"), path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
-
 def run_pipeline() -> dict:
-    print("=" * 60)
-    print("PIPELINE SPOTIFY EDITORIAL — INICIO")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("PIPELINE SPOTIFY EDITORIAL — INICIO ROBUSTO")
+    logger.info("=" * 60)
+
+    # --- Pre-check: Ingestión Autónoma (Agente 00) ---
+    if not INPUTS_DIR.exists() or not any(INPUTS_DIR.iterdir()):
+        logger.warning("Carpeta inputs/ vacia o no existe. Iniciando Agente 00 (Data Fetcher)...")
+        try:
+            agent00 = _load_agent("00_github_data_fetcher.py")
+            fetch_stats = agent00.run_fetcher()
+            logger.info(f"Agente 00 completado. Stats: {fetch_stats}")
+        except Exception as e:
+            logger.error(f"Fallo el Agente 00: {e}")
+            logger.debug(traceback.format_exc())
+            # Continúa, pero el pipeline fallará después si no hay datos
+
+    results = {}
 
     # --- Agente 1: Data Recon ---
-    print("\n[1/4] DATA RECON")
-    print("-" * 40)
+    logger.info("\n[1/4] DATA RECON")
     t0 = time.time()
-    agent01 = _load_agent("01_data_recon.py")
-    recon_result = agent01.run_recon()
-    print(f"Agente 1 completado en {time.time() - t0:.1f}s")
+    try:
+        agent01 = _load_agent("01_data_recon.py")
+        results["recon"] = agent01.run_recon()
+        logger.info(f"Agente 1 completado en {time.time() - t0:.1f}s")
+    except Exception as e:
+        logger.error(f"Error critico en Agente 1: {e}")
+        logger.debug(traceback.format_exc())
+        return results
 
     # --- Agente 2: EDA Auto ---
-    print("\n[2/4] EDA AUTO")
-    print("-" * 40)
+    logger.info("\n[2/4] EDA AUTO")
     t0 = time.time()
-    agent02 = _load_agent("02_eda_auto.py")
-    eda_result = agent02.run_eda()
-    print(f"Agente 2 completado en {time.time() - t0:.1f}s")
+    try:
+        agent02 = _load_agent("02_eda_auto.py")
+        results["eda"] = agent02.run_eda()
+        logger.info(f"Agente 2 completado en {time.time() - t0:.1f}s")
+    except Exception as e:
+        logger.error(f"Error en Agente 2: {e}")
+        logger.debug(traceback.format_exc())
+        # El EDA a veces no bloquea el hypothesis testing si no es dependiente directo
+        # Pero segun la logica, el Agente 3 necesita df_merged del EDA.
+        return results
 
-    # --- Agente 3: Hypothesis Testing (reutiliza df_merged del Agente 2) ---
-    print("\n[3/4] HYPOTHESIS TESTING")
-    print("-" * 40)
+    # --- Agente 3: Hypothesis Testing ---
+    logger.info("\n[3/4] HYPOTHESIS TESTING")
     t0 = time.time()
-    agent03 = _load_agent("03_hypothesis.py")
-    hypothesis_result = agent03.run_hypothesis(
-        df_merged=eda_result.get("df_merged")  # evita re-leer y re-limpiar CSVs
-    )
-    print(f"Agente 3 completado en {time.time() - t0:.1f}s")
+    try:
+        agent03 = _load_agent("03_hypothesis.py")
+        results["hypothesis"] = agent03.run_hypothesis(
+            df_merged=results["eda"].get("df_merged")
+        )
+        logger.info(f"Agente 3 completado en {time.time() - t0:.1f}s")
+    except Exception as e:
+        logger.error(f"Error en Agente 3: {e}")
+        logger.debug(traceback.format_exc())
+        results["hypothesis"] = {}
 
     # --- Agente 4: Business Translation ---
-    print("\n[4/4] BUSINESS TRANSLATION")
-    print("-" * 40)
+    logger.info("\n[4/4] BUSINESS TRANSLATION")
     t0 = time.time()
-    agent04 = _load_agent("04_business_tx.py")
-    brief = agent04.run_business_tx(
-        recon_result=recon_result,
-        eda_result=eda_result,
-        hypothesis_result=hypothesis_result,
-    )
-    print(f"Agente 4 completado en {time.time() - t0:.1f}s")
+    try:
+        agent04 = _load_agent("04_business_tx.py")
+        results["brief"] = agent04.run_business_tx(
+            recon_result=results.get("recon", {}),
+            eda_result=results.get("eda", {}),
+            hypothesis_result=results.get("hypothesis", {}),
+        )
+        logger.info(f"Agente 4 completado en {time.time() - t0:.1f}s")
+    except Exception as e:
+        logger.error(f"Error en Agente 4: {e}")
+        logger.debug(traceback.format_exc())
+        results["brief"] = ""
 
-    # --- Resumen final ---
-    print("\n" + "=" * 60)
-    print("PIPELINE COMPLETADO")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("PIPELINE CORE COMPLETADO")
+    
+    # --- Evaluaciones (Capa 5) ---
+    logger.info("Invocando Capa 5 (Evaluaciones)...")
+    try:
+        import eval_pipeline
+        eval_stats = eval_pipeline.run_evaluations(results)
+        logger.info(f"Evals completados: {eval_stats['timestamp']}")
+    except Exception as e:
+        logger.error(f"Fallo en la Capa de Evals: {e}")
+        logger.debug(traceback.format_exc())
 
-    veredictos = {
-        key: hypothesis_result[key]["verdict"]
-        for key in ["h1", "h2", "h3", "h4"]
-    }
-    print("\nVeredictos de hipótesis:")
-    for h, v in veredictos.items():
-        print(f"  {h.upper()}: {v}")
-
-    outputs_dir = Path(__file__).parent / "outputs"
-    print(f"\nOutputs generados en: {outputs_dir}")
-    for f in outputs_dir.glob("*"):
-        print(f"  {f.name}")
-
-    return {
-        "recon": recon_result,
-        "eda": eda_result,
-        "hypothesis": hypothesis_result,
-        "brief": brief,
-    }
-
+    logger.info("FIN DEL PROCESO.")
+    return results
 
 if __name__ == "__main__":
     run_pipeline()
